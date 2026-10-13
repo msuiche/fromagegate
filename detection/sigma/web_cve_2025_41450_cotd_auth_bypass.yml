@@ -1,0 +1,40 @@
+title: Danfoss AK-SM 8xxA Code-of-the-Day Authentication Bypass
+id: 39818ea0-5864-4dc6-99d9-e85bd408f195
+status: experimental
+description: |
+  Detects authentication requests to the AK-SM 8xxA xml.cgi getauth handler
+  that carry attributes consistent with the CVE-2025-41450 code-of-the-day
+  bypass. The real bypass attribute names were redacted in public sources;
+  the stand-in names used here match the companion PoC and MUST be replaced
+  with firmware-recovered names for production use. The numeric-password
+  selection is a deployable heuristic: the code-of-the-day is a short
+  date-derived numeric value. Requires request-body logging (reverse proxy,
+  WAF, or full-payload capture); URI-only access logs cannot see the bypass.
+references:
+  - https://claroty.com/team82/research/freeze-the-controller-defrost-the-food-uncovering-vulnerabilities-in-danfoss-refrigeration-controllers
+  - https://www.danfoss.com/en/service-and-support/coordinated-vulnerability-disclosure/danfoss-security-advisories/dsa-2025-03-01/
+  - https://www.cisa.gov/news-events/ics-advisories/icsa-25-140-03
+author: offensive-research
+date: 2026-10-12
+logsource:
+  category: webserver
+detection:
+  selection_uri:
+    cs-uri|contains:
+      - '/xml.cgi'
+      - 'action=getauth'
+  selection_poc_attrs:
+    cs-body|contains:
+      - 'codeofday'
+      - 'support'
+  selection_numeric_pw:
+    cs-body|re: '(<password>|password=)\d{5,8}(</|&|\s|$)'
+  condition: selection_uri and 1 of selection_poc_*, selection_numeric_pw
+falsepositives:
+  - Legitimate administrator logins (numeric-password selection only; tune
+    against the baseline volume of getauth requests per device)
+level: high
+tags:
+  - attack.initial_access
+  - attack.t1078
+  - cve.2025.41450

@@ -1,0 +1,48 @@
+title: Danfoss AK-SM 8xxA Web Service Spawning Shell or Utilities
+id: a054834e-e733-44a0-8323-b392e728e270
+status: experimental
+description: |
+  Detects the AK-SM 8xxA web service processes (sm_app / Task_Web and the
+  sm_fcgi_app CGI layer) spawning shell interpreters or system utilities.
+  The vulnerable alarm-to-mail config handler formats the SMTP password
+  (item 0x1be1) into an OS shell command, so injected commands execute as
+  children of the web service (CVE-2025-41451). Requires process-creation
+  telemetry from the device (auditd, syslog forwarding, EDR) or an
+  adjacent sensor.
+references:
+  - https://claroty.com/team82/research/freeze-the-controller-defrost-the-food-uncovering-vulnerabilities-in-danfoss-refrigeration-controllers
+  - https://www.danfoss.com/en/service-and-support/coordinated-vulnerability-disclosure/danfoss-security-advisories/dsa-2025-08-01/
+author: offensive-research
+date: 2026-10-12
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_parent:
+    ParentImage|endswith:
+      - '/sm_app'
+      - '/sm_fcgi_app'
+  selection_child:
+    Image|endswith:
+      - '/sh'
+      - '/bash'
+      - '/dash'
+      - '/id'
+      - '/whoami'
+      - '/uname'
+      - '/curl'
+      - '/wget'
+      - '/nc'
+      - '/ncat'
+      - '/busybox'
+      - '/python'
+      - '/perl'
+  condition: all of selection_*
+falsepositives:
+  - Firmware update and backup routines legitimately shell out; whitelist
+    known maintenance windows and script names observed during updates
+level: critical
+tags:
+  - attack.execution
+  - attack.t1059
+  - cve.2025.41451

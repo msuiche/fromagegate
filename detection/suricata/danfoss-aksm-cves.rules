@@ -1,0 +1,68 @@
+# =====================================================================
+# Danfoss AK-SM 8xxA - CVE-2025-41450 / CVE-2025-41451 / CVE-2025-41452
+# Suricata rules (v6/v7 sticky-buffer syntax)
+#
+# Source research: Claroty Team82 (Aug 2026), Danfoss DSA-2025-03-01,
+# DSA-2025-08-01, CISA ICSA-25-140-03.
+#
+# IMPORTANT CAVEATS
+# - The real code-of-the-day bypass attribute names were redacted in all
+#   public sources. Rules 4414501/4414502 use the stand-in names from the
+#   companion PoC ("codeofday"/"support") and validate the PoC/emulator
+#   chain; replace them with firmware-recovered names for production.
+# - Rules 4414503/4414511/4414512/4414520+ key on documented artifacts
+#   (item id 0x1be1, action names, payload shapes) and are deployable as-is.
+# - Assumes AK-SM devices live in $HOME_NET and management traffic is HTTP
+#   (or TLS-terminated at a reverse proxy you can inspect).
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# CVE-2025-41450 - code-of-the-day authentication bypass (< R4.2)
+# ---------------------------------------------------------------------
+
+# Hunting: ANY getauth request. Legitimate logins exist, so this is a
+# baselining rule - investigate bursts, off-hours hits, and any getauth
+# from sources that never authenticate interactively.
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"DANFOSS AK-SM xml.cgi getauth authentication request"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/xml.cgi"; content:"action=getauth"; classtype:policy-violation; sid:4414500; rev:1; metadata:cve CVE-2025-41450, stage authentication;)
+
+# PoC-tier: bypass attribute set in the auth request body (stand-in names).
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"CVE-2025-41450 Danfoss AK-SM code-of-the-day auth bypass attempt (PoC attribute)"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/xml.cgi"; content:"action=getauth"; http.request_body; pcre:"/(codeofday|support)[\">=]\\s*1[<\\s&]/i"; classtype:attempted-admin; sid:4414501; rev:1; metadata:cve CVE-2025-41450, confidence poc;)
+
+# Heuristic: getauth whose password is exactly a short numeric code.
+# The CotD is date-derived; legitimate admin passwords that are exactly
+# 5-8 digits are rare. Tunes well with the 4414500 baseline.
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"CVE-2025-41450 Danfoss AK-SM getauth with short numeric password (possible code-of-the-day)"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/xml.cgi"; content:"action=getauth"; http.request_body; pcre:"/(<password>|password=)\\d{5,8}(<\\/|&|\\s|$)/i"; classtype:attempted-admin; sid:4414502; rev:1; metadata:cve CVE-2025-41450, confidence heuristic;)
+
+# ---------------------------------------------------------------------
+# CVE-2025-41451 - alarm-to-mail OS command injection (< 4.3.1)
+# ---------------------------------------------------------------------
+
+# High confidence: email config save whose item 0x1be1 (SMTP auth
+# password) contains shell metacharacters. 0x1be1 is documented.
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"CVE-2025-41451 Danfoss AK-SM alarm-to-mail command injection via item 0x1be1"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/xml.cgi"; content:"action=set_email_config"; http.request_body; content:"0x1be1"; pcre:"/(%27|\\x27|%60|\\x60|%24%28|\\$\\(|%3b|\\x3b|%7c|\\x7c|%26|\\x26|%0a)/i"; classtype:attempted-admin; sid:4414510; rev:1; metadata:cve CVE-2025-41451, confidence high;)
+
+# Generic catch: any xml.cgi POST body carrying shell metacharacter +
+# command-name pattern (covers other injection fields on the same handler).
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"DANFOSS AK-SM xml.cgi POST with shell injection pattern"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/xml.cgi"; http.request_body; pcre:"/(%3b|\\x3b|%7c|\\x7c|%60|\\x60|\\$\\(|%24%28|%0a)[\\s%+]*?(id|whoami|uname|cat|ls|sh|bash|dash|curl|wget|nc|ncat|perl|python|busybox)(\\b|\\s|%20)/i"; classtype:attempted-admin; sid:4414511; rev:2; metadata:cve CVE-2025-41451, confidence medium;)
+
+# ---------------------------------------------------------------------
+# CVE-2025-41452 - nginx headers.conf injection / sm_app DoS (< 4.3.1)
+# ---------------------------------------------------------------------
+
+# High confidence: ANY call to load_nginx_headers. Legitimate use is
+# limited to rare admin maintenance; alert on every occurrence.
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"CVE-2025-41452 Danfoss AK-SM nginx headers.conf replacement attempt"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/xml.cgi"; content:"action=load_nginx_headers"; classtype:attempted-admin; sid:4414520; rev:1; metadata:cve CVE-2025-41452, confidence high;)
+
+# Uploaded conf carrying routing directives (the weaponized content).
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"CVE-2025-41452 Danfoss AK-SM headers.conf upload with nginx routing directives"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"action=load_nginx_headers"; http.request_body; pcre:"/(location\\s+\\/|proxy_pass|rewrite\\s|add_header\\s)/i"; classtype:attempted-admin; sid:4414521; rev:1; metadata:cve CVE-2025-41452, confidence high;)
+
+# DoS condition: sm_app crash signature - burst of 503s from the device
+# (injected route hit -> sm_app crash -> service-wide 503 window).
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"CVE-2025-41452 Danfoss AK-SM web service 503 burst (sm_app crash DoS)"; flow:established,to_client; http.stat_code; content:"503"; detection_filter:track by_src, count 5, seconds 60; classtype:attempted-dos; sid:4414522; rev:1; metadata:cve CVE-2025-41452, confidence medium;)
+
+# ---------------------------------------------------------------------
+# Exposure hunting (not CVE-specific): StoreView management interface
+# answering HTTP. Any hit on firmware < R4.2 / < 4.3.1 is vulnerable;
+# thousands of these were internet-exposed per Censys in the Team82 scan.
+# ---------------------------------------------------------------------
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"DANFOSS AK-SM StoreView management interface exposed (check firmware >= R4.3.1)"; flow:established,to_client; http.stat_code; content:"200"; http.response_body; content:"StoreView"; nocase; classtype:misc-activity; sid:4414530; rev:1; metadata:purpose exposure-hunting;)

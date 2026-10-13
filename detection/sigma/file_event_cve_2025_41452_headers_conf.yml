@@ -1,0 +1,31 @@
+title: Danfoss AK-SM 8xxA headers.conf Replaced via Web Interface
+id: 206e9dbf-5205-4e9b-ac88-054f4e95a6fc
+status: experimental
+description: |
+  Detects modification of the nginx headers.conf include file on AK-SM
+  8xxA devices. This file is included by the Internet-facing nginx
+  instance and is replaced through the web application's
+  action=load_nginx_headers handler, enabling arbitrary nginx directive
+  injection (CVE-2025-41452). Adjust TargetFilename to the actual firmware
+  path if it differs on your deployment.
+references:
+  - https://claroty.com/team82/research/freeze-the-controller-defrost-the-food-uncovering-vulnerabilities-in-danfoss-refrigeration-controllers
+  - https://www.danfoss.com/en/service-and-support/coordinated-vulnerability-disclosure/danfoss-security-advisories/dsa-2025-08-01/
+author: offensive-research
+date: 2026-10-12
+logsource:
+  category: file_event
+  product: linux
+detection:
+  selection:
+    TargetFilename|endswith:
+      - '/headers.conf'
+  condition: selection
+falsepositives:
+  - Rare legitimate administrator maintenance through the same web
+    function; correlate with change tickets
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1105
+  - cve.2025.41452
